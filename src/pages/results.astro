@@ -3,6 +3,7 @@ import { desc, eq } from "drizzle-orm";
 import Base from "../layouts/Base.astro";
 import { db, votes, type Vote } from "../db";
 import { ADMIN_COOKIE, adminConfigured, adminToken, isAdmin, passwordMatches } from "../lib/admin";
+import { setVotingOpen, votingOpen } from "../lib/settings";
 import { CATEGORIES, nameKey, type CategoryKey } from "../lib/vote";
 
 let loginError = false;
@@ -20,6 +21,8 @@ if (Astro.request.method === "POST") {
     if (action === "delete") {
       const id = Number(form.get("id"));
       if (Number.isInteger(id)) await db.delete(votes).where(eq(votes.id, id));
+    } else if (action === "close" || action === "open") {
+      await setVotingOpen(action === "open");
     } else if (action === "logout") {
       Astro.cookies.delete(ADMIN_COOKIE, { path: "/" });
     }
@@ -28,6 +31,7 @@ if (Astro.request.method === "POST") {
 }
 
 const authed = isAdmin(Astro.cookies.get(ADMIN_COOKIE)?.value);
+const open = authed && (await votingOpen());
 const allVotes: Vote[] = authed ? await db.select().from(votes).orderBy(desc(votes.createdAt)) : [];
 
 /** Ranked counts; differently-cased spellings of an Other name merge. */
@@ -77,6 +81,21 @@ const timeFmt = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-d
             <a class="btn btn-ghost" href="/results">↻ Refresh</a>
           </span>
         </div>
+
+        <form
+          method="post"
+          class:list={["card voting-switch", { closed: !open }]}
+          data-confirm={open ? "Close voting? Nobody else will be able to vote." : "Reopen voting?"}
+        >
+          <input type="hidden" name="action" value={open ? "close" : "open"} />
+          <span>
+            <span class="switch-state">{open ? "🟢 Voting is open" : "🔒 Voting is closed"}</span>
+            <span class="q-hint">{open ? "Close it when it's time for the reveal." : "Guests see a \"voting is closed\" screen."}</span>
+          </span>
+          <button class:list={["btn", open ? "btn-close" : "btn-ghost"]} type="submit">
+            {open ? "Close voting" : "Reopen"}
+          </button>
+        </form>
 
         {CATEGORIES.map((c) => {
           const rows = tally(c.key);

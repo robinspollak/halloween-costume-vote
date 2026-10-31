@@ -1,4 +1,4 @@
-import { OTHER, matchGuests, nameKey } from "../lib/vote";
+import { OTHER, matchGuests, nameKey, ruleProblems, type CategoryKey } from "../lib/vote";
 
 type Item = { label: string; value: string };
 
@@ -39,7 +39,15 @@ function setupCombo(root: HTMLElement) {
     const other = value === OTHER;
     specify.hidden = !other;
     specify.required = other;
-    if (value) error.hidden = true;
+    if (value && error.dataset.kind !== "rule") error.hidden = true;
+    root.dispatchEvent(new Event("combo-change", { bubbles: true }));
+  }
+
+  function showError(message: string, kind: "missing" | "rule") {
+    error.textContent = message;
+    error.dataset.kind = kind;
+    error.hidden = false;
+    root.classList.toggle("broken", kind === "rule");
   }
 
   function render() {
@@ -135,15 +143,26 @@ function setupCombo(root: HTMLElement) {
     pick(items[Number(li.dataset.i)]);
   });
 
+  specify.addEventListener("input", () => root.dispatchEvent(new Event("combo-change", { bubbles: true })));
+
   return {
+    field: hidden.name,
+    /** The chosen name, or "" while unanswered. */
+    pick(): string {
+      return hidden.value === OTHER ? specify.value.trim() : hidden.value;
+    },
     validate(): boolean {
-      const ok = hidden.value === OTHER ? specify.value.trim() !== "" : hidden.value !== "";
-      if (!ok) {
-        error.textContent =
-          hidden.value === OTHER ? "Type their name." : "Pick a name from the list, or choose Other.";
-        error.hidden = false;
-      }
+      const ok = this.pick() !== "";
+      if (!ok) showError(hidden.value === OTHER ? "Type their name." : "Pick a name from the list, or choose Other.", "missing");
       return ok;
+    },
+    setRuleProblem(problem: string | undefined) {
+      if (problem) showError(problem, "rule");
+      else if (error.dataset.kind === "rule") {
+        error.hidden = true;
+        delete error.dataset.kind;
+        root.classList.remove("broken");
+      }
     },
     focus() {
       (hidden.value === OTHER ? specify : input).focus();
@@ -154,8 +173,21 @@ function setupCombo(root: HTMLElement) {
 const form = document.querySelector<HTMLFormElement>("form[data-vote]");
 if (form) {
   const combos = [...form.querySelectorAll<HTMLElement>("[data-combo]")].map(setupCombo);
+
+  // Same rules the server enforces, shown as soon as a pick breaks one.
+  const checkRules = () => {
+    const problems = ruleProblems(Object.fromEntries(combos.map((c) => [c.field, c.pick()])));
+    return combos.filter((c) => {
+      const problem = problems[c.field as CategoryKey];
+      c.setRuleProblem(problem);
+      return Boolean(problem);
+    });
+  };
+  form.addEventListener("combo-change", checkRules);
+
   form.addEventListener("submit", (e) => {
-    const bad = combos.filter((c) => !c.validate());
+    const missing = combos.filter((c) => !c.validate());
+    const bad = missing.length ? missing : checkRules();
     if (bad.length) {
       e.preventDefault();
       bad[0].focus();

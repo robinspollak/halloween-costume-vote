@@ -36,3 +36,27 @@ export function matchGuests(guests: string[], query: string, limit = 8): string[
   }
   return [...starts, ...contains].slice(0, limit);
 }
+
+/**
+ * Ballot rules beyond "fill everything in": no voting for yourself, and one
+ * person can't win you over in more than one category. Errors land on the
+ * later field so the first pick stands.
+ */
+export function ruleProblems(picks: Partial<Record<"voter" | CategoryKey, string>>): Partial<Record<CategoryKey, string>> {
+  const problems: Partial<Record<CategoryKey, string>> = {};
+  const voterKey = picks.voter ? nameKey(picks.voter) : "";
+  const seen = new Map<string, string>();
+  for (const c of CATEGORIES) {
+    const pick = picks[c.key];
+    if (!pick) continue;
+    const k = nameKey(pick);
+    if (voterKey && k === voterKey) {
+      problems[c.key] = "Nice try. No voting for yourself!";
+    } else if (seen.has(k)) {
+      problems[c.key] = `You already picked ${pick} for ${seen.get(k)}. Spread the love!`;
+    } else {
+      seen.set(k, c.label.toLowerCase());
+    }
+  }
+  return problems;
+}

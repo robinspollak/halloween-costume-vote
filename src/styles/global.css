@@ -254,6 +254,13 @@ input:focus {
   font-size: 1rem;
 }
 
+.combo.broken .combo-input-wrap input {
+  border-color: var(--blood);
+}
+.combo.broken .combo-caret {
+  color: var(--blood);
+}
+
 .combo-list {
   position: absolute;
   z-index: 20;
@@ -505,4 +512,28 @@ input:focus {
 }
 .table-scroll {
   overflow-x: auto;
+}
+
+.voting-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.voting-switch.closed {
+  border-color: rgba(255, 77, 106, 0.45);
+}
+.switch-state {
+  font-weight: 800;
+}
+.btn-close {
+  flex-shrink: 0;
+  background: var(--blood);
+  color: #2a0008;
+  min-height: 44px;
+  font-size: 0.95rem;
+  padding: 8px 16px;
+}
+.voting-switch .btn-ghost {
+  flex-shrink: 0;
 }

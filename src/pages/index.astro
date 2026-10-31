@@ -3,7 +3,8 @@ import { asc, eq, sql } from "drizzle-orm";
 import Base from "../layouts/Base.astro";
 import Combo from "../components/Combo.astro";
 import { db, guests, votes, type Vote } from "../db";
-import { CATEGORIES, MAX_NAME, OTHER, cleanName, nameKey } from "../lib/vote";
+import { votingOpen } from "../lib/settings";
+import { CATEGORIES, MAX_NAME, OTHER, cleanName, nameKey, ruleProblems } from "../lib/vote";
 
 const VOTED_COOKIE = "voted";
 const FIELDS = ["voter", ...CATEGORIES.map((c) => c.key)] as const;
@@ -14,6 +15,7 @@ const guestNames = (await db.select({ name: guests.name }).from(guests).orderBy(
 );
 const guestByKey = new Map(guestNames.map((g) => [g.toLowerCase(), g]));
 
+const open = await votingOpen();
 let formError: string | undefined;
 const fieldErrors: Partial<Record<Field, string>> = {};
 const values: Partial<Record<Field, { value: string; specify: string }>> = {};
@@ -25,6 +27,8 @@ if (Astro.request.method === "POST") {
     Astro.cookies.delete(VOTED_COOKIE, { path: "/" });
     return Astro.redirect("/", 303);
   }
+
+  if (!open) return Astro.redirect("/", 303);
 
   const picked: Partial<Record<Field, string>> = {};
   for (const field of FIELDS) {
@@ -40,6 +44,8 @@ if (Astro.request.method === "POST") {
       else fieldErrors[field] = "Pick a name from the list, or choose Other.";
     }
   }
+
+  for (const [field, problem] of Object.entries(ruleProblems(picked))) fieldErrors[field as Field] ??= problem;
 
   if (Object.keys(fieldErrors).length === 0) {
     const voter = picked.voter!;
@@ -69,7 +75,7 @@ if (Astro.request.method === "GET" && Number.isInteger(votedId)) {
     <span class="pumpkin" aria-hidden="true">🎃</span>
     <span class="eyebrow">Halloween Housewarming</span>
     <h1>Costume Contest</h1>
-    {!myVote && <p>Cast your votes before the big reveal. One ballot per guest.</p>}
+    {!myVote && open && <p>Cast your votes before the big reveal. One ballot per guest.</p>}
   </header>
 
   {
@@ -93,6 +99,12 @@ if (Astro.request.method === "GET" && Number.isInteger(votedId)) {
           <input type="hidden" name="action" value="reset" />
           <button class="link-btn" type="submit">Someone else voting on this phone?</button>
         </form>
+      </section>
+    ) : !open ? (
+      <section class="card thanks">
+        <span class="ghost" aria-hidden="true">⚰️</span>
+        <h2>Voting is closed</h2>
+        <p class="muted">The ballots are sealed. Stick around for the big reveal!</p>
       </section>
     ) : (
       <form method="post" data-vote novalidate>

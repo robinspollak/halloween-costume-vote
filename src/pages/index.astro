@@ -1,0 +1,132 @@
+---
+import { asc, eq, sql } from "drizzle-orm";
+import Base from "../layouts/Base.astro";
+import Combo from "../components/Combo.astro";
+import { db, guests, votes, type Vote } from "../db";
+import { CATEGORIES, MAX_NAME, OTHER, cleanName, nameKey } from "../lib/vote";
+
+const VOTED_COOKIE = "voted";
+const FIELDS = ["voter", ...CATEGORIES.map((c) => c.key)] as const;
+type Field = (typeof FIELDS)[number];
+
+const guestNames = (await db.select({ name: guests.name }).from(guests).orderBy(asc(sql`lower(${guests.name})`))).map(
+  (g) => g.name,
+);
+const guestByKey = new Map(guestNames.map((g) => [g.toLowerCase(), g]));
+
+let formError: string | undefined;
+const fieldErrors: Partial<Record<Field, string>> = {};
+const values: Partial<Record<Field, { value: string; specify: string }>> = {};
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+
+  if (form.get("action") === "reset") {
+    Astro.cookies.delete(VOTED_COOKIE, { path: "/" });
+    return Astro.redirect("/", 303);
+  }
+
+  const picked: Partial<Record<Field, string>> = {};
+  for (const field of FIELDS) {
+    const value = String(form.get(field) ?? "");
+    const specify = cleanName(String(form.get(`${field}_other`) ?? "")).slice(0, MAX_NAME);
+    values[field] = { value, specify };
+    if (value === OTHER) {
+      if (specify) picked[field] = specify;
+      else fieldErrors[field] = "Type their name.";
+    } else {
+      const guest = guestByKey.get(nameKey(value));
+      if (guest) picked[field] = guest;
+      else fieldErrors[field] = "Pick a name from the list, or choose Other.";
+    }
+  }
+
+  if (Object.keys(fieldErrors).length === 0) {
+    const voter = picked.voter!;
+    const [row] = await db
+      .insert(votes)
+      .values({ voter, voterKey: nameKey(voter), best: picked.best!, scariest: picked.scariest!, funniest: picked.funniest! })
+      .onConflictDoNothing({ target: votes.voterKey })
+      .returning({ id: votes.id });
+    if (row) {
+      Astro.cookies.set(VOTED_COOKIE, String(row.id), { path: "/", maxAge: 60 * 60 * 24 * 7, sameSite: "lax", httpOnly: true });
+      return Astro.redirect("/", 303);
+    }
+    fieldErrors.voter = `${voter} has already voted. One ballot per ghoul!`;
+  }
+  formError = "Something's not quite right. Check the answers in red.";
+}
+
+let myVote: Vote | undefined;
+const votedId = Number(Astro.cookies.get(VOTED_COOKIE)?.value);
+if (Astro.request.method === "GET" && Number.isInteger(votedId)) {
+  [myVote] = await db.select().from(votes).where(eq(votes.id, votedId));
+}
+---
+
+<Base title={myVote ? "Thanks for voting" : undefined}>
+  <header class="hero">
+    <span class="pumpkin" aria-hidden="true">🎃</span>
+    <span class="eyebrow">Halloween Housewarming</span>
+    <h1>Costume Contest</h1>
+    {!myVote && <p>Cast your votes before the big reveal. One ballot per guest.</p>}
+  </header>
+
+  {
+    myVote ? (
+      <section class="card thanks">
+        <span class="ghost" aria-hidden="true">👻</span>
+        <h2>Your votes are in</h2>
+        <p class="muted">Thanks, {myVote.voter}! Winners are revealed later tonight.</p>
+        <ul class="picks">
+          {CATEGORIES.map((c) => (
+            <li>
+              <span class="emoji" aria-hidden="true">{c.emoji}</span>
+              <span>
+                <span class="cat">{c.label}</span>
+                <span class="who">{myVote![c.key]}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+        <form method="post">
+          <input type="hidden" name="action" value="reset" />
+          <button class="link-btn" type="submit">Someone else voting on this phone?</button>
+        </form>
+      </section>
+    ) : (
+      <form method="post" data-vote novalidate>
+        {formError && <div class="notice error">{formError}</div>}
+        <Combo
+          name="voter"
+          label="Your name"
+          emoji="🧛"
+          hint="So we know you've voted"
+          placeholder="Start typing your name…"
+          you
+          value={values.voter?.value}
+          specify={values.voter?.specify}
+          error={fieldErrors.voter}
+        />
+        {CATEGORIES.map((c) => (
+          <Combo
+            name={c.key}
+            label={c.label}
+            emoji={c.emoji}
+            value={values[c.key]?.value}
+            specify={values[c.key]?.specify}
+            error={fieldErrors[c.key]}
+          />
+        ))}
+        <button class="btn btn-primary" type="submit">
+          Cast my votes 🔮
+        </button>
+      </form>
+    )
+  }
+
+  <script id="guest-data" type="application/json" set:html={JSON.stringify(guestNames).replace(/</g, "\\u003c")} />
+  <script>
+    import "../scripts/combo";
+  </script>
+</Base>

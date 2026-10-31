@@ -1,0 +1,169 @@
+---
+import { desc, eq } from "drizzle-orm";
+import Base from "../layouts/Base.astro";
+import { db, votes, type Vote } from "../db";
+import { ADMIN_COOKIE, adminConfigured, adminToken, isAdmin, passwordMatches } from "../lib/admin";
+import { CATEGORIES, nameKey, type CategoryKey } from "../lib/vote";
+
+let loginError = false;
+
+if (Astro.request.method === "POST") {
+  const form = await Astro.request.formData();
+  const action = form.get("action");
+  if (action === "login") {
+    if (passwordMatches(String(form.get("password") ?? ""))) {
+      Astro.cookies.set(ADMIN_COOKIE, adminToken(), { path: "/", maxAge: 60 * 60 * 24 * 7, sameSite: "lax", httpOnly: true });
+      return Astro.redirect("/results", 303);
+    }
+    loginError = true;
+  } else if (isAdmin(Astro.cookies.get(ADMIN_COOKIE)?.value)) {
+    if (action === "delete") {
+      const id = Number(form.get("id"));
+      if (Number.isInteger(id)) await db.delete(votes).where(eq(votes.id, id));
+    } else if (action === "logout") {
+      Astro.cookies.delete(ADMIN_COOKIE, { path: "/" });
+    }
+    return Astro.redirect("/results", 303);
+  }
+}
+
+const authed = isAdmin(Astro.cookies.get(ADMIN_COOKIE)?.value);
+const allVotes: Vote[] = authed ? await db.select().from(votes).orderBy(desc(votes.createdAt)) : [];
+
+/** Ranked counts; differently-cased spellings of an Other name merge. */
+function tally(key: CategoryKey) {
+  const counts = new Map<string, { name: string; count: number }>();
+  for (const v of allVotes) {
+    const k = nameKey(v[key]);
+    const entry = counts.get(k) ?? { name: v[key], count: 0 };
+    entry.count++;
+    counts.set(k, entry);
+  }
+  return [...counts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+}
+
+const timeFmt = new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
+---
+
+<Base title="Results">
+  <header class="hero">
+    <span class="pumpkin" aria-hidden="true">🕯️</span>
+    <span class="eyebrow">For the hosts' eyes only</span>
+    <h1>Results</h1>
+  </header>
+
+  {
+    !adminConfigured() ? (
+      <div class="card">Results are locked. Set <code>ADMIN_PASSWORD</code> to open them.</div>
+    ) : !authed ? (
+      <form method="post" class="card">
+        <input type="hidden" name="action" value="login" />
+        <label class="q-label" for="password">
+          <span class="emoji" aria-hidden="true">🗝️</span>Password
+        </label>
+        <input type="password" id="password" name="password" autofocus autocomplete="current-password" />
+        {loginError && <p class="field-error">Wrong password.</p>}
+        <button class="btn btn-primary" type="submit" style="margin-top: 14px">
+          Unlock
+        </button>
+      </form>
+    ) : (
+      <>
+        <div class="toolbar">
+          <span class="stat">
+            <strong>{allVotes.length}</strong> {allVotes.length === 1 ? "ballot" : "ballots"}
+          </span>
+          <span>
+            <a class="btn btn-ghost" href="/results">↻ Refresh</a>
+          </span>
+        </div>
+
+        {CATEGORIES.map((c) => {
+          const rows = tally(c.key);
+          const top = rows[0]?.count ?? 0;
+          return (
+            <section class="card">
+              <h2>
+                {c.emoji} {c.label}
+              </h2>
+              {rows.length === 0 ? (
+                <p class="muted">No votes yet.</p>
+              ) : (
+                <ul class="tally">
+                  {rows.map((r) => (
+                    <li class:list={{ lead: r.count === top }}>
+                      <span class="bar" style={`width: ${(r.count / top) * 100}%`} />
+                      <span class="name">
+                        {r.count === top && "👑 "}
+                        {r.name}
+                      </span>
+                      <span class="count">{r.count}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          );
+        })}
+
+        <section class="card">
+          <h2>🗳️ Ballots</h2>
+          {allVotes.length === 0 ? (
+            <p class="muted">Nobody has voted yet.</p>
+          ) : (
+            <div class="table-scroll">
+              <table class="votes">
+                <thead>
+                  <tr>
+                    <th>Voter</th>
+                    {CATEGORIES.map((c) => (
+                      <th>{c.emoji}</th>
+                    ))}
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {allVotes.map((v) => (
+                    <tr>
+                      <td class="voter">
+                        {v.voter}
+                        <div class="muted" style="font-weight: 400; font-size: 0.75rem">
+                          {timeFmt.format(v.createdAt)}
+                        </div>
+                      </td>
+                      {CATEGORIES.map((c) => (
+                        <td>{v[c.key]}</td>
+                      ))}
+                      <td>
+                        <form method="post" data-confirm={`Delete ${v.voter}'s ballot? They'll be able to vote again.`}>
+                          <input type="hidden" name="action" value="delete" />
+                          <input type="hidden" name="id" value={v.id} />
+                          <button class="btn btn-danger" type="submit" aria-label={`Delete ${v.voter}'s ballot`}>
+                            ✕
+                          </button>
+                        </form>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <form method="post" style="text-align: center">
+          <input type="hidden" name="action" value="logout" />
+          <button class="link-btn" type="submit">Lock results</button>
+        </form>
+      </>
+    )
+  }
+
+  <script>
+    document.querySelectorAll<HTMLFormElement>("form[data-confirm]").forEach((f) =>
+      f.addEventListener("submit", (e) => {
+        if (!confirm(f.dataset.confirm)) e.preventDefault();
+      }),
+    );
+  </script>
+</Base>

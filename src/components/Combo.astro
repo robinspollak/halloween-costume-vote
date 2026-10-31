@@ -1,0 +1,62 @@
+---
+import { OTHER, MAX_NAME } from "../lib/vote";
+
+interface Props {
+  name: string;
+  label: string;
+  emoji: string;
+  hint?: string;
+  placeholder?: string;
+  value?: string;
+  specify?: string;
+  error?: string;
+  you?: boolean;
+}
+
+const { name, label, emoji, hint, placeholder = "Start typing a name…", value = "", specify = "", error, you = false } = Astro.props;
+const id = `q-${name}`;
+const listId = `${id}-list`;
+const isOther = value === OTHER;
+const display = isOther ? "Other (please specify)" : value;
+---
+
+<div class:list={["card question", { you }]}>
+  <label class="q-label" for={id}>
+    <span class="emoji" aria-hidden="true">{emoji}</span>
+    <span>{label}{hint && <span class="q-hint">{hint}</span>}</span>
+  </label>
+  <div class:list={["combo", { picked: Boolean(value) }]} data-combo>
+    <div class="combo-input-wrap">
+      <input
+        type="text"
+        id={id}
+        role="combobox"
+        aria-autocomplete="list"
+        aria-expanded="false"
+        aria-controls={listId}
+        autocomplete="off"
+        autocapitalize="words"
+        spellcheck="false"
+        enterkeyhint="next"
+        placeholder={placeholder}
+        value={display}
+      />
+      <span class="combo-caret" aria-hidden="true">{value ? "✓" : "▼"}</span>
+    </div>
+    <ul class="combo-list" role="listbox" id={listId} hidden></ul>
+    <input type="hidden" name={name} value={value} />
+    <input
+      class="specify"
+      type="text"
+      name={`${name}_other`}
+      placeholder="Please specify their name"
+      maxlength={MAX_NAME}
+      autocomplete="off"
+      autocapitalize="words"
+      value={specify}
+      hidden={!isOther}
+      required={isOther}
+    />
+  </div>
+  <p class="field-error" data-error hidden={!error}>{error}</p>
+</div>
